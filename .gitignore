@@ -1,0 +1,7 @@
+# nunca subir credenciais ou arquivos gerados
+config.json
+*.token
+dist/
+build/
+*.spec
+__pycache__/
