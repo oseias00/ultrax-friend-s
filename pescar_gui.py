@@ -1,7 +1,7 @@
 import json, os, queue, random, re, socket, sys, threading, time
 import urllib.error, urllib.parse, urllib.request, webbrowser
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, font as tkfont
 
 VARAS = {
     "Vara de bambu": 10, "Vara de madeira reforçada": 9, "Vara de fibra de vidro": 8,
@@ -41,20 +41,21 @@ CFG = {
     "debug": True,
     # valores fixos, só no código:
     "msg_vender": "$vender todos", "exp_seg": 1800,
-    "eventos_reset": "sorte rara pelos, rede coletiva pelos, garrafa ao mar, concurso do menor peixe, "
+    "eventos_reset": "sorte rara pelos, rede coletiva pelos, garrafa ao mar, concurso menor peixe, "
                      "peso pesado pelos, xp em dobro, cardume passageiro",
 }
 FUNCOES = {   # chave: (texto na interface, ligado por padrão)
     "pescar": ("Pescar automático", True),
     "frota": ("Embarcar em frotas", True),
-    "reset": ("Pescar quando o cooldown resetar", True),
-    "turbo": ("Maré turbo", True),
     "venda": ("Venda turbinada", True),
     "mochila": ("Mochila cheia", True),
     "torneio": ("Entrar em torneios", True),
     "duelo": ("Aceitar duelos", True),
 }
-FIXAS = {"msg_vender", "eventos_reset", "exp_seg", "exp_min", "token", "lembrar_token", "intervalo"}
+# "reset" e "turbo" não são mais opções: ficam sempre ativos.
+# Estão em FIXAS só para ignorar valores antigos que ainda existam no config.json salvo.
+FIXAS = {"msg_vender", "eventos_reset", "exp_seg", "exp_min", "token", "lembrar_token", "intervalo",
+         "reset", "turbo"}
 for k, (_, on) in FUNCOES.items():
     CFG[k] = on
 
@@ -269,7 +270,7 @@ def tratar(est, autor, texto, env, esperar, log):
     elif eh_turbo(autor, texto):
         if em_expedicao:
             log("Maré turbo ignorada: você está em expedição.")
-        elif CFG["turbo"] and ok("turbo"):
+        elif ok("turbo"):
             log("Maré turbo! Cooldown pela metade por 10 min.")
             est["fim_turbo"] = est["turbo"] = time.time()
             est["fim_turbo"] += DURACAO_TURBO
@@ -278,7 +279,7 @@ def tratar(est, autor, texto, env, esperar, log):
         if ok("frota"):
             log("Frota aberta! Embarcando...")
             d(1.5, 4); env(MSG_EMBARCAR); est["frota"] = time.time()
-    elif CFG["reset"] and eh_reset(autor, texto):
+    elif eh_reset(autor, texto):
         if ok("reset"):
             log("Cooldown resetado! Pescando...")
             d(1.5, 4); env(MSG_PESCAR); est["reset"] = time.time(); agendar()
@@ -361,121 +362,434 @@ class Bot(threading.Thread):
         except Exception: pass
         self.log("Desconectado.")
 
+
 # ---------- Interface ----------
-BG, PAINEL, CAMPO = "#18181b", "#1f1f23", "#2a2a2e"
-TXT, SUB, ROXO, ROXO2, CLARO = "#efeff1", "#adadb8", "#9146ff", "#772ce8", "#bf94ff"
-FONTE = "Segoe UI"
+BG, PAINEL, CAMPO, BORDA, LOGBG = "#0f0f12", "#18181c", "#25252b", "#2c2c34", "#0b0b0d"
+TXT, SUB, ROXO, ROXO2, CLARO = "#efeff1", "#9a9aa8", "#9146ff", "#772ce8", "#bf94ff"
+VERDE, VERMELHO, DESAB = "#3ddc84", "#ff6b6b", "#5d5d68"
+FONTE, MONO = "Segoe UI", "Consolas"
+LARGURA_LARGA, LARGURA_SUB = 820, 640   # abaixo disso o layout empilha / esconde o subtítulo
+
+ICONE_64 = (
+    "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"
+    "dtC5ff5/AWaZ1VD6taMzAAAAAElFTkSuQmCC"
+)
+ICONE_32 = (
+    "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"
+)
+
+def escolher_fontes(root):
+    fam = set(tkfont.families(root))
+    f = next((n for n in ("Segoe UI", "Inter", "SF Pro Text", "Helvetica Neue", "Noto Sans", "DejaVu Sans") if n in fam), "TkDefaultFont")
+    m = next((n for n in ("Cascadia Mono", "Consolas", "SF Mono", "Menlo", "DejaVu Sans Mono") if n in fam), "TkFixedFont")
+    return f, m
+
+class Botao(tk.Canvas):
+    """Botão arredondado com hover. Aceita config(text=, state=, estilo=, command=)."""
+    ESTILOS = {   # normal, hover, texto
+        "primario": (ROXO, ROXO2, "#ffffff"),
+        "neutro": ("#2d2d35", "#3a3a45", TXT),
+    }
+
+    def __init__(self, pai, texto, comando, estilo="neutro", altura=38, largura=10, fundo=PAINEL, tam=10):
+        super().__init__(pai, height=altura, width=largura, bg=fundo, highlightthickness=0, bd=0)
+        self.texto, self.comando, self.estilo, self.estado, self.tam = texto, comando, estilo, "normal", tam
+        self.passou = self.premido = False
+        self.bind("<Configure>", lambda e: self.desenhar())
+        self.bind("<Enter>", lambda e: self._hover(True))
+        self.bind("<Leave>", lambda e: self._hover(False))
+        self.bind("<ButtonPress-1>", self._press)
+        self.bind("<ButtonRelease-1>", self._release)
+        self._cursor()
+
+    def configure(self, cnf=None, **kw):
+        mudou = False
+        for chave, attr in (("text", "texto"), ("state", "estado"), ("estilo", "estilo"), ("command", "comando")):
+            if chave in kw:
+                novo = kw.pop(chave)
+                if getattr(self, attr) != novo:
+                    setattr(self, attr, novo); mudou = True
+        if cnf or kw:
+            super().configure(cnf, **kw)
+        if mudou:
+            self._cursor(); self.desenhar()
+    config = configure
+
+    def _cursor(self):
+        super().configure(cursor="arrow" if self.estado == "disabled" else "hand2")
+
+    def _hover(self, v):
+        self.passou = v; self.desenhar()
+
+    def _press(self, e):
+        if self.estado != "disabled":
+            self.premido = True; self.desenhar()
+
+    def _release(self, e):
+        era, self.premido = self.premido, False
+        self.desenhar()
+        if era and self.estado != "disabled" and self.comando \
+                and 0 <= e.x <= self.winfo_width() and 0 <= e.y <= self.winfo_height():
+            self.comando()
+
+    def _rr(self, x1, y1, x2, y2, r, **kw):
+        r = max(1, min(r, (y2 - y1) // 2))
+        pts = [x1 + r, y1, x1 + r, y1, x2 - r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y1 + r, x2, y2 - r,
+               x2, y2 - r, x2, y2, x2 - r, y2, x2 - r, y2, x1 + r, y2, x1 + r, y2, x1, y2, x1, y2 - r,
+               x1, y2 - r, x1, y1 + r, x1, y1 + r, x1, y1]
+        return self.create_polygon(pts, smooth=True, **kw)
+
+    def desenhar(self):
+        self.delete("all")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 4 or h < 4: return
+        normal, hover, fg = self.ESTILOS.get(self.estilo, self.ESTILOS["neutro"])
+        if self.estado == "disabled": cor, fg = "#202026", DESAB
+        elif self.premido or self.passou: cor = hover
+        else: cor = normal
+        self._rr(1, 1, w - 1, h - 1, 10, fill=cor, outline=cor)
+        self.create_text(w // 2, h // 2, text=self.texto, fill=fg, font=(FONTE, self.tam, "bold"))
+
+class Chave(tk.Canvas):
+    """Interruptor (liga/desliga) ligado a uma BooleanVar."""
+    def __init__(self, pai, var, fundo=PAINEL):
+        super().__init__(pai, width=42, height=24, bg=fundo, highlightthickness=0, bd=0, cursor="hand2")
+        self.var = var
+        var.trace_add("write", lambda *a: self.desenhar())
+        self.bind("<Button-1>", lambda e: self.alternar())
+        self.desenhar()
+
+    def alternar(self):
+        self.var.set(not self.var.get())
+
+    def desenhar(self):
+        try:
+            self.delete("all")
+            on = bool(self.var.get())
+            cor = ROXO if on else "#3a3a44"
+            self.create_oval(1, 1, 23, 23, fill=cor, outline=cor)
+            self.create_oval(19, 1, 41, 23, fill=cor, outline=cor)
+            self.create_rectangle(12, 1, 30, 23, fill=cor, outline=cor)
+            x = 21 if on else 3
+            self.create_oval(x, 3, x + 18, 21, fill="#ffffff", outline="#ffffff")
+        except tk.TclError:
+            pass
+
+class Rolavel(tk.Frame):
+    """Área com rolagem vertical que estica o conteúdo quando a janela é maior que ele."""
+    def __init__(self, pai, bg):
+        super().__init__(pai, bg=bg)
+        self.cv = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
+        self.sb = ttk.Scrollbar(self, orient="vertical", command=self.cv.yview)
+        self.cv.configure(yscrollcommand=self.sb.set)
+        self.sb.pack(side="right", fill="y")
+        self.cv.pack(side="left", fill="both", expand=True)
+        self.inner = tk.Frame(self.cv, bg=bg)
+        self.win = self.cv.create_window(0, 0, window=self.inner, anchor="nw")
+        self.cv.bind("<Configure>", lambda e: self.ajustar())
+        self.inner.bind("<Configure>", lambda e: self.ajustar())
+        for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.bind_all(ev, self.rolar, add="+")
+
+    def ajustar(self):
+        w, h = self.cv.winfo_width(), self.cv.winfo_height()
+        alvo = max(h, self.inner.winfo_reqheight())
+        self.cv.itemconfigure(self.win, width=w, height=alvo)
+        self.cv.configure(scrollregion=(0, 0, w, alvo))
+        if alvo <= h: self.cv.yview_moveto(0)
+
+    def rolar(self, e):
+        if isinstance(e.widget, (tk.Text, tk.Listbox)): return
+        if self.inner.winfo_reqheight() <= self.cv.winfo_height(): return
+        if e.num == 4: n = -1
+        elif e.num == 5: n = 1
+        else: n = -1 if e.delta > 0 else 1
+        self.cv.yview_scroll(n * 2, "units")
 
 class App(tk.Tk):
     def __init__(self):
+        global FONTE, MONO
+        if sys.platform == "win32":   # faz o ícone próprio aparecer na barra de tarefas
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ultrax.fishersfriend")
+            except Exception:
+                pass
         super().__init__()
-        self.title("fisher's friend by ultrax"); self.geometry("1020x740"); self.minsize(940, 700)
+        FONTE, MONO = escolher_fontes(self)
+        self.title("fisher's friend by ultrax"); self.geometry("1020x720"); self.minsize(360, 480)
         self.q, self.bot, self.v, self.login_t, self.dlg = queue.Queue(), None, {}, None, None
+        self.largo, self.sub_vis = True, True
+        self.ico64, self.ico32 = tk.PhotoImage(data=ICONE_64), tk.PhotoImage(data=ICONE_32)
+        try: self.iconphoto(True, self.ico64)
+        except tk.TclError: pass
         carregar_cfg()
         self.estilos(); self.montar(); self.sync()
+        self.bind("<Configure>", self.ao_redimensionar)
         self.protocol("WM_DELETE_WINDOW", self.fechar)
         self.after(100, self.drenar)
 
+    # ----- estilos -----
     def estilos(self):
         self.configure(bg=BG)
         st = ttk.Style(self); st.theme_use("clam")
         st.configure(".", background=BG, foreground=TXT, fieldbackground=CAMPO, font=(FONTE, 10),
-                     bordercolor="#3a3a3d", lightcolor=CAMPO, darkcolor=CAMPO, troughcolor=BG)
-        st.configure("Card.TFrame", background=PAINEL)
-        st.configure("Card.TLabel", background=PAINEL, foreground=TXT)
-        st.configure("Sub.TLabel", background=PAINEL, foreground=SUB, font=(FONTE, 9))
-        st.configure("Titulo.TLabel", background=PAINEL, foreground=CLARO, font=(FONTE, 11, "bold"))
-        st.configure("TEntry", fieldbackground=CAMPO, foreground=TXT, insertcolor=TXT, padding=5)
-        st.configure("TCombobox", fieldbackground=CAMPO, background="#3a3a3d", foreground=TXT,
-                     arrowcolor=TXT, padding=4)
+                     bordercolor=BORDA, troughcolor=BG)
+        borda = dict(bordercolor=BORDA, lightcolor=BORDA, darkcolor=BORDA)
+        foco = dict(bordercolor=[("focus", ROXO)], lightcolor=[("focus", ROXO)], darkcolor=[("focus", ROXO)])
+        st.configure("TEntry", fieldbackground=CAMPO, foreground=TXT, insertcolor=TXT, padding=(8, 6), **borda)
+        st.map("TEntry", fieldbackground=[("disabled", PAINEL)], foreground=[("disabled", DESAB)], **foco)
+        st.configure("TCombobox", fieldbackground=CAMPO, background=CAMPO, foreground=TXT,
+                     arrowcolor=SUB, padding=(8, 6), **borda)
         st.map("TCombobox", fieldbackground=[("readonly", CAMPO), ("disabled", PAINEL)],
-               foreground=[("readonly", TXT), ("disabled", SUB)])
+               foreground=[("readonly", TXT), ("disabled", DESAB)],
+               background=[("active", "#2f2f37"), ("disabled", PAINEL)],
+               arrowcolor=[("disabled", DESAB)],
+               selectbackground=[("readonly", CAMPO)], selectforeground=[("readonly", TXT)], **foco)
         self.option_add("*TCombobox*Listbox.background", CAMPO)
         self.option_add("*TCombobox*Listbox.foreground", TXT)
         self.option_add("*TCombobox*Listbox.selectBackground", ROXO)
-        st.configure("TButton", background="#3a3a3d", foreground=TXT, borderwidth=0, padding=(12, 8))
-        st.map("TButton", background=[("active", "#4a4a4d"), ("disabled", "#2a2a2e")],
-               foreground=[("disabled", "#6a6a6e")])
-        st.configure("Accent.TButton", background=ROXO, foreground="white", font=(FONTE, 10, "bold"))
-        st.map("Accent.TButton", background=[("active", ROXO2), ("disabled", "#3a3a3d")],
-               foreground=[("disabled", "#6a6a6e")])
-        st.configure("Card.TCheckbutton", background=PAINEL, foreground=TXT, padding=3)
-        st.map("Card.TCheckbutton", background=[("active", PAINEL)],
-               indicatorcolor=[("selected", ROXO), ("!selected", CAMPO)])
+        self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+        self.bind_class("TCombobox", "<MouseWheel>", lambda e: None)   # evita trocar a vara rolando a página
+        for nome, trilho in (("Vertical.TScrollbar", BG), ("Log.Vertical.TScrollbar", LOGBG)):
+            st.configure(nome, background="#34343d", troughcolor=trilho, bordercolor=trilho,
+                         lightcolor="#34343d", darkcolor="#34343d", arrowcolor=SUB, relief="flat")
+            st.map(nome, background=[("active", "#4a4a55"), ("pressed", "#4a4a55")])
+            try:   # barra fina, sem setinhas
+                st.layout(nome, [("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+                    ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
+            except tk.TclError:
+                pass
 
     def var(self, chave, tipo=tk.StringVar):
         self.v[chave] = tipo(value=CFG[chave])
         self.v[chave].trace_add("write", lambda *a: self.sync())
         return self.v[chave]
 
+    # ----- peças -----
     def card(self, pai, titulo):
-        f = ttk.Frame(pai, style="Card.TFrame", padding=12); f.pack(fill="x", pady=(0, 10))
-        ttk.Label(f, text=titulo, style="Titulo.TLabel").pack(anchor="w", pady=(0, 6))
-        c = ttk.Frame(f, style="Card.TFrame"); c.pack(fill="x")
+        f = tk.Frame(pai, bg=PAINEL, highlightthickness=1, highlightbackground=BORDA, highlightcolor=BORDA)
+        f.pack(fill="x", pady=(0, 10))
+        tk.Label(f, text=titulo.upper(), bg=PAINEL, fg=SUB, font=(FONTE, 8, "bold")).pack(anchor="w", padx=14, pady=(12, 6))
+        c = tk.Frame(f, bg=PAINEL); c.pack(fill="x", padx=14, pady=(0, 14))
         return c
 
+    def linha_chave(self, pai, texto, var, pady=4):
+        f = tk.Frame(pai, bg=PAINEL); f.pack(fill="x", pady=pady)
+        ch = Chave(f, var); ch.pack(side="right")
+        lab = tk.Label(f, text=texto, bg=PAINEL, fg=TXT, font=(FONTE, 10), anchor="w", cursor="hand2")
+        lab.pack(side="left", fill="x", expand=True)
+        lab.bind("<Button-1>", lambda e: ch.alternar())
+        return f
+
     def montar(self):
-        topo = tk.Frame(self, bg=ROXO); topo.pack(fill="x")
-        tk.Label(topo, text="🎣 fisher's friend - o seu amigo auxiliar de pesca!", bg=ROXO, fg="white",
-                 font=(FONTE, 15, "bold"), padx=16, pady=10).pack(side="left")
-        self.status = tk.Label(topo, text="● Desconectado", bg=ROXO, fg="white",
-                               font=(FONTE, 10, "bold"), padx=16)
-        self.status.pack(side="right")
-        corpo = ttk.Frame(self, padding=12); corpo.pack(fill="both", expand=True)
-        esq = ttk.Frame(corpo); esq.pack(side="left", fill="y")
-        dir_ = ttk.Frame(corpo); dir_.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        # Cabeçalho
+        topo = tk.Frame(self, bg=PAINEL); topo.pack(fill="x")
+        tk.Label(topo, image=self.ico32, bg=PAINEL).pack(side="left", padx=(14, 10), pady=10)
+        tit = tk.Frame(topo, bg=PAINEL); tit.pack(side="left")
+        tk.Label(tit, text="fisher's friend", bg=PAINEL, fg=TXT, font=(FONTE, 14, "bold")).pack(anchor="w")
+        self.lbl_sub = tk.Label(tit, text="o seu amigo auxiliar de pesca  ·  by ultrax", bg=PAINEL, fg=SUB,
+                                font=(FONTE, 9))
+        self.lbl_sub.pack(anchor="w")
+        pill = tk.Frame(topo, bg=CAMPO); pill.pack(side="right", padx=14)
+        self.dot = tk.Label(pill, text="●", bg=CAMPO, fg=SUB, font=(FONTE, 10)); self.dot.pack(side="left", padx=(10, 4), pady=5)
+        self.status = tk.Label(pill, text="Desconectado", bg=CAMPO, fg=TXT, font=(FONTE, 9, "bold"))
+        self.status.pack(side="left", padx=(0, 12))
+        tk.Frame(self, bg=ROXO, height=2).pack(fill="x")
+
+        # Corpo rolável (duas colunas em janela larga, empilhado em janela pequena)
+        self.rol = Rolavel(self, BG); self.rol.pack(fill="both", expand=True)
+        self.corpo = self.rol.inner
+        self.esq, self.dir = tk.Frame(self.corpo, bg=BG), tk.Frame(self.corpo, bg=BG)
+        esq, dir_ = self.esq, self.dir
 
         # Conta
         c = self.card(esq, "Conta da Twitch")
-        self.lbl_conta = ttk.Label(c, text="", style="Card.TLabel"); self.lbl_conta.pack(anchor="w")
-        self.btn_conta = ttk.Button(c, text="Entrar com a Twitch", style="Accent.TButton",
-                                    command=self.conta_click)
-        self.btn_conta.pack(fill="x", pady=(8, 0))
+        self.lbl_conta = tk.Label(c, text="", bg=PAINEL, fg=SUB, font=(FONTE, 10), anchor="w", justify="left")
+        self.lbl_conta.pack(fill="x")
+        self.btn_conta = Botao(c, "Entrar com a Twitch", self.conta_click, "primario")
+        self.btn_conta.pack(fill="x", pady=(10, 0))
 
         # Canal
         c = self.card(esq, "Canal")
-        g = ttk.Frame(c, style="Card.TFrame"); g.pack(fill="x"); g.columnconfigure(1, weight=1)
         self.campos = []
-        for i, (rot, ch) in enumerate([("Canal", "canal"), ("Bot do canal", "bot")]):
-            ttk.Label(g, text=rot, style="Card.TLabel").grid(row=i, column=0, sticky="w", pady=3, padx=(0, 10))
-            e = ttk.Entry(g, textvariable=self.var(ch), width=24); e.grid(row=i, column=1, sticky="ew", pady=3)
+        for i, (rot, ch) in enumerate((("Canal", "canal"), ("Bot do canal", "bot"))):
+            tk.Label(c, text=rot, bg=PAINEL, fg=SUB, font=(FONTE, 9), anchor="w").pack(fill="x", pady=(0 if i == 0 else 8, 3))
+            e = ttk.Entry(c, textvariable=self.var(ch)); e.pack(fill="x")
             self.campos.append(e)
 
         # Vara
         c = self.card(esq, "Vara")
         self.cb = ttk.Combobox(c, textvariable=self.var("vara"), values=list(VARAS), state="readonly")
         self.cb.pack(fill="x")
-        g = ttk.Frame(c, style="Card.TFrame"); g.pack(fill="x", pady=(6, 0))
-        ttk.Checkbutton(g, text="Personalizado (seg):", style="Card.TCheckbutton",
-                        variable=self.var("personalizado", tk.BooleanVar)).pack(side="left")
-        ttk.Entry(g, textvariable=self.var("segundos"), width=6).pack(side="left", padx=6)
-        self.lbl_cd = ttk.Label(c, text="", style="Sub.TLabel"); self.lbl_cd.pack(anchor="w", pady=(6, 0))
+        self.linha_chave(c, "Tempo personalizado", self.var("personalizado", tk.BooleanVar), pady=(10, 4))
+        g = tk.Frame(c, bg=PAINEL); g.pack(fill="x")
+        self.ent_seg = ttk.Entry(g, textvariable=self.var("segundos"), width=8, justify="center")
+        self.ent_seg.pack(side="right")
+        tk.Label(g, text="Segundos", bg=PAINEL, fg=SUB, font=(FONTE, 9)).pack(side="left")
+        self.lbl_cd = tk.Label(c, text="", bg=PAINEL, fg=SUB, font=(FONTE, 9), anchor="w", justify="left")
+        self.lbl_cd.pack(fill="x", pady=(10, 0))
 
         # Funções
         c = self.card(esq, "Funções")
         for k, (txt, _) in FUNCOES.items():
-            ttk.Checkbutton(c, text=txt, style="Card.TCheckbutton",
-                            variable=self.var(k, tk.BooleanVar)).pack(anchor="w")
+            self.linha_chave(c, txt, self.var(k, tk.BooleanVar))
+        tk.Label(c, text="Maré turbo e reset de cooldown ficam sempre ativos.", bg=PAINEL, fg=SUB,
+                 font=(FONTE, 8), anchor="w", justify="left").pack(fill="x", pady=(8, 0))
 
         # Botões
-        b = ttk.Frame(esq); b.pack(fill="x", pady=(2, 0)); b.columnconfigure((0, 1), weight=1)
-        self.btn_con = ttk.Button(b, text="▶  Conectar", style="Accent.TButton", command=self.conectar)
-        self.btn_con.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        self.btn_des = ttk.Button(b, text="■  Desconectar", command=self.desconectar, state="disabled")
-        self.btn_des.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        b = tk.Frame(esq, bg=BG); b.pack(fill="x"); b.columnconfigure((0, 1), weight=1, uniform="b")
+        self.btn_con = Botao(b, "▶  Conectar", self.conectar, "primario", fundo=BG)
+        self.btn_con.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        self.btn_des = Botao(b, "■  Desconectar", self.desconectar, "neutro", fundo=BG)
+        self.btn_des.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        self.btn_des.config(state="disabled")
 
         # Log
-        top = ttk.Frame(dir_); top.pack(fill="x", pady=(0, 6))
-        ttk.Label(top, text="Atividade", font=(FONTE, 12, "bold")).pack(side="left")
-        ttk.Button(top, text="Limpar", command=lambda: self.log_w.delete("1.0", "end")).pack(side="right")
-        ttk.Checkbutton(top, text="Mostrar chat", variable=self.var("debug", tk.BooleanVar)).pack(side="right", padx=10)
-        caixa = tk.Frame(dir_, bg="#0e0e10"); caixa.pack(fill="both", expand=True)
-        self.log_w = tk.Text(caixa, bg="#0e0e10", fg=TXT, relief="flat", wrap="word", font=("Consolas", 10),
-                             padx=10, pady=8, insertbackground=TXT, highlightthickness=0)
-        sb = ttk.Scrollbar(caixa, command=self.log_w.yview); self.log_w.config(yscrollcommand=sb.set)
+        top = tk.Frame(dir_, bg=BG); top.pack(fill="x", pady=(0, 8))
+        tk.Label(top, text="Atividade", bg=BG, fg=TXT, font=(FONTE, 12, "bold")).pack(side="left")
+        Botao(top, "Limpar", self.limpar_log, "neutro", altura=28, largura=64, fundo=BG, tam=9).pack(side="right")
+        sw = tk.Frame(top, bg=BG); sw.pack(side="right", padx=(0, 12))
+        tk.Label(sw, text="Mostrar chat", bg=BG, fg=SUB, font=(FONTE, 9)).pack(side="left", padx=(0, 8))
+        Chave(sw, self.var("debug", tk.BooleanVar), fundo=BG).pack(side="left")
+        caixa = tk.Frame(dir_, bg=LOGBG, highlightthickness=1, highlightbackground=BORDA, highlightcolor=BORDA)
+        caixa.pack(fill="both", expand=True)
+        self.log_w = tk.Text(caixa, bg=LOGBG, fg=TXT, relief="flat", wrap="word", font=(MONO, 10), height=14,
+                             padx=12, pady=10, insertbackground=TXT, highlightthickness=0, borderwidth=0)
+        sb = ttk.Scrollbar(caixa, style="Log.Vertical.TScrollbar", command=self.log_w.yview)
+        self.log_w.config(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y"); self.log_w.pack(fill="both", expand=True)
-        for tag, cor in (("env", "#3ddc84"), ("chat", "#7a7a85"), ("erro", "#ff6b6b"), ("info", CLARO)):
+        for tag, cor in (("env", VERDE), ("chat", "#7a7a85"), ("erro", VERMELHO), ("info", CLARO)):
             self.log_w.tag_config(tag, foreground=cor)
+
+        self.arranjar()
+
+    # ----- responsividade -----
+    def arranjar(self):
+        c = self.corpo
+        for w in (self.esq, self.dir): w.grid_forget()
+        for i in range(2):
+            c.columnconfigure(i, weight=0, minsize=0); c.rowconfigure(i, weight=0, minsize=0)
+        if self.largo:   # lado a lado
+            c.columnconfigure(0, weight=0, minsize=340); c.columnconfigure(1, weight=1); c.rowconfigure(0, weight=1)
+            self.esq.grid(row=0, column=0, sticky="nsew", padx=(14, 7), pady=14)
+            self.dir.grid(row=0, column=1, sticky="nsew", padx=(7, 14), pady=14)
+        else:            # empilhado (janela pequena)
+            c.columnconfigure(0, weight=1); c.rowconfigure(1, weight=1)
+            self.esq.grid(row=0, column=0, sticky="nsew", padx=14, pady=(14, 7))
+            self.dir.grid(row=1, column=0, sticky="nsew", padx=14, pady=(7, 14))
+        self.rol.ajustar()
+
+    def ao_redimensionar(self, e):
+        if e.widget is not self: return
+        largo = e.width >= LARGURA_LARGA
+        if largo != self.largo:
+            self.largo = largo; self.arranjar()
+        sub = e.width >= LARGURA_SUB
+        if sub != self.sub_vis:
+            self.sub_vis = sub
+            if sub: self.lbl_sub.pack(anchor="w")
+            else: self.lbl_sub.pack_forget()
 
     def sync(self):
         for k, var in self.v.items():
@@ -486,17 +800,23 @@ class App(tk.Tk):
         CFG["intervalo"] = seg if (CFG["personalizado"] and seg > 0) else VARAS.get(CFG["vara"], 4) * 60
         if hasattr(self, "lbl_cd"):
             m, s = divmod(CFG["intervalo"], 60)
-            self.lbl_cd.config(text=f"Cooldown usado: {m}m{s:02d}s (turbo: metade)")
-            self.cb.config(state="disabled" if CFG["personalizado"] else "readonly")
+            self.lbl_cd.config(text=f"Cooldown usado: {m}m{s:02d}s  ·  turbo: metade")
+            pers = bool(CFG["personalizado"])
+            self.cb.config(state="disabled" if pers else "readonly")
+            self.ent_seg.config(state="normal" if pers else "disabled")
 
     # ----- log -----
     def logar(self, msg): self.q.put(msg)
+
+    def limpar_log(self): self.log_w.delete("1.0", "end")
 
     def escrever(self, msg):
         low = msg.lower()
         tag = ("env" if "enviado:" in msg else "chat" if msg.startswith("[chat]") else
                "erro" if any(p in low for p in ("recusado", "falha", "falhou", "caiu", "expirada", "sem conexão"))
                else "info")
+        if not re.match(r"\d\d:\d\d:\d\d", msg):
+            msg = f"{time.strftime('%H:%M:%S')}  {msg}"
         self.log_w.insert("end", msg + "\n", tag); self.log_w.see("end")
         if int(self.log_w.index("end-1c").split(".")[0]) > 1500: self.log_w.delete("1.0", "300.0")
 
@@ -515,22 +835,42 @@ class App(tk.Tk):
         else:
             if not CLIENT_ID or CLIENT_ID.startswith("COLE"):
                 messagebox.showinfo("Falta configurar", "O CLIENT_ID do app ainda não foi colocado no código.\n"
-                                    "Veja o passo a passo e cole o Client ID no topo do arquivo."); return
+                                    "Veja o passo a passo no README e cole o Client ID no topo do arquivo."); return
             self.login_t = LoginThread(self.q); self.login_t.start()
 
     def dialogo_login(self, codigo, url):
         webbrowser.open(url)
         d = self.dlg = tk.Toplevel(self); d.title("Entrar com a Twitch"); d.configure(bg=PAINEL)
-        d.geometry("440x300"); d.resizable(False, False); d.transient(self)
-        tk.Label(d, text="Autorize no navegador", bg=PAINEL, fg=TXT, font=(FONTE, 14, "bold")).pack(pady=(20, 4))
-        tk.Label(d, text="Abrimos a página da Twitch. Entre na sua conta e clique em Ativar.\n"
-                         "Se ela pedir um código, digite este:", bg=PAINEL, fg=SUB, font=(FONTE, 10)).pack()
-        tk.Label(d, text=codigo, bg=PAINEL, fg=CLARO, font=("Consolas", 28, "bold")).pack(pady=12)
-        tk.Label(d, text="Aguardando autorização...", bg=PAINEL, fg=SUB).pack()
-        b = tk.Frame(d, bg=PAINEL); b.pack(pady=14)
-        ttk.Button(b, text="Abrir navegador", command=lambda: webbrowser.open(url)).pack(side="left", padx=4)
-        ttk.Button(b, text="Cancelar", command=self.cancelar_login).pack(side="left", padx=4)
+        d.resizable(False, False); d.transient(self)
+        try: d.iconphoto(False, self.ico64)
+        except tk.TclError: pass
+        tk.Frame(d, bg=ROXO, height=3).pack(fill="x")
+        corpo = tk.Frame(d, bg=PAINEL); corpo.pack(padx=28, pady=22)
+        tk.Label(corpo, text="Autorize no navegador", bg=PAINEL, fg=TXT, font=(FONTE, 14, "bold")).pack()
+        tk.Label(corpo, text="Abrimos a página da Twitch. Entre na sua conta e clique em Ativar.\n"
+                             "Se ela pedir um código, digite este:", bg=PAINEL, fg=SUB, font=(FONTE, 10),
+                 justify="center", wraplength=340).pack(pady=(6, 0))
+        caixa = tk.Frame(corpo, bg=CAMPO, highlightthickness=1, highlightbackground=BORDA); caixa.pack(pady=14)
+        tk.Label(caixa, text=codigo, bg=CAMPO, fg=CLARO, font=(MONO, 26, "bold"), padx=24, pady=8).pack()
+        tk.Label(corpo, text="Aguardando autorização...", bg=PAINEL, fg=SUB, font=(FONTE, 9)).pack()
+        b = tk.Frame(corpo, bg=PAINEL); b.pack(fill="x", pady=(16, 0)); b.columnconfigure((0, 1), weight=1, uniform="d")
+        bc = Botao(b, "Copiar código", None, "neutro")
+        bc.comando = lambda: self.copiar(codigo, bc)
+        bc.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        Botao(b, "Abrir navegador", lambda: webbrowser.open(url), "primario").grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        Botao(b, "Cancelar", self.cancelar_login, "neutro").grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         d.protocol("WM_DELETE_WINDOW", self.cancelar_login)
+        d.update_idletasks()   # centraliza sobre a janela principal
+        x = self.winfo_rootx() + (self.winfo_width() - d.winfo_reqwidth()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - d.winfo_reqheight()) // 3
+        d.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+
+    def copiar(self, texto, botao):
+        self.clipboard_clear(); self.clipboard_append(texto)
+        def volta():
+            try: botao.config(text="Copiar código")
+            except tk.TclError: pass
+        botao.config(text="Copiado ✔"); self.after(1500, volta)
 
     def fechar_dialogo(self):
         if self.dlg:
@@ -560,15 +900,16 @@ class App(tk.Tk):
         vivo = self.bot is not None and self.bot.is_alive()
         if self.bot and not vivo: self.bot = None
         logado = self.logado()
-        self.lbl_conta.config(text=f"✔ Conectado como {CFG['nick'] or '...'}" if logado
-                              else "Você ainda não entrou na Twitch.")
+        if logado: self.lbl_conta.config(text=f"✔  Logado como {CFG['nick'] or '...'}", fg=VERDE)
+        else: self.lbl_conta.config(text="Você ainda não entrou na Twitch.", fg=SUB)
         self.btn_conta.config(text="Sair da conta" if logado else "Entrar com a Twitch",
-                              style="TButton" if logado else "Accent.TButton",
+                              estilo="neutro" if logado else "primario",
                               state="disabled" if vivo else "normal")
         self.btn_con.config(state="disabled" if (vivo or not logado) else "normal")
         self.btn_des.config(state="normal" if vivo else "disabled")
         for e in self.campos: e.config(state="disabled" if vivo else "normal")
-        self.status.config(text="● Conectado" if vivo else "● Desconectado")
+        self.dot.config(fg=VERDE if vivo else SUB)
+        self.status.config(text="Conectado" if vivo else "Desconectado")
         self.after(150, self.drenar)
 
     def conectar(self):
